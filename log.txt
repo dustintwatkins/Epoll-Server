@@ -1,0 +1,24 @@
+REQUEST ON: Mon 16 Apr 2018 20:17 59 MDT
+URI: http://localhost:50183/
+
+REQUEST ON: Mon 16 Apr 2018 20:38 17 MDT
+URI: http://localhost:50183/
+
+REQUEST ON: Mon 16 Apr 2018 20:43 22 MDT
+URI: http://localhost:50183/
+
+REQUEST ON: Mon 16 Apr 2018 20:59 21 MDT
+URI: http://localhost:50183/
+
+REQUEST ON: Mon 16 Apr 2018 21:13 02 MDT
+URI: http://localhost:50183/
+
+REQUEST ON: Mon 16 Apr 2018 21:21 55 MDT
+URI: http://localhost:50183/
+
+REQUEST ON: Mon 16 Apr 2018 21:53 20 MDT
+URI: http://localhost:50183/home.html
+
+REQUEST ON: Mon 16 Apr 2018 21:55 32 MDT
+URI: http://localhost:50183/home.html
+
