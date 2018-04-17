@@ -22,11 +22,10 @@ static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64;
 
 
 struct event_activity{
-  int listen_fd;
   int state;
+  int listen_fd;
   int conn_fd;
-  int server_fd;
-  int src_fd;
+  int server_fd;            //Destination server fd
   char buf[MAXLINE];
   int n_read;
   int n_written;
@@ -37,7 +36,7 @@ struct event_activity{
 struct event_action{
   int(*callback)(struct event_activity);
   //void *arg;
-  struct event_activity *arg;
+  struct event_activity arg;
 };
 
 struct epoll_event event;
@@ -59,6 +58,7 @@ void build_http_header(char *http_header, char *hostname, char *path, int port, 
 int send_req(struct event_activity);
 int recv_resp(struct event_activity);
 int send_resp(struct event_activity);
+void while_check_error(struct event_activity *argptr, struct event_action *ea);
 
 int main(int argc, char **argv){
 
@@ -71,7 +71,7 @@ int main(int argc, char **argv){
   int len;
   struct event_activity *argptr;
   struct event_action *ea;
-  struct event_activity *act;
+  struct event_activity act;
 
   size_t n;
   char buf[MAX_OBJECT_SIZE];
@@ -98,8 +98,8 @@ int main(int argc, char **argv){
   //Step 3: Register listenfd with epoll instance
   ea = malloc(sizeof(struct event_action));
   ea->callback = handle_new_client;
-  act = malloc(sizeof(struct event_activity));
-  act->listen_fd = listenfd;
+  act = (struct event_activity)malloc(sizeof(struct event_activity));
+  act.listen_fd = listenfd;
   argptr = malloc(sizeof(struct event_activity));
   *argptr = act;
   //*argptr = listenfd;
@@ -108,7 +108,7 @@ int main(int argc, char **argv){
   event.data.ptr = ea;
   event.events = EPOLLIN | EPOLLET;
   if (epoll_ctl(efd, EPOLL_CTL_ADD, listenfd, &event) < 0){
-    fprintf(stderr, "error adding event\n");
+    fprintf(stderr, "error adding event\n");conn_fd
     exit(1);
   }
 
@@ -136,15 +136,42 @@ int main(int argc, char **argv){
       break;
     }
     for (int i = 0; i < num_ready; i++) {
-      printf("i = %d\n", i);
+
       ea = (struct event_action *)events[i].data.ptr;
       argptr = ea->arg;
       if (events[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)){
-        fprintf(stderr, "epoll error on fd %d\n", *argptr);
-        close(*argptr);
-        free(ea->arg);
-        free(ea);
-        continue;
+        printf("epoll error in execution\n");
+        //Check which state to see where error is
+        /*if(*argptr->state == READ_REQ){
+          fprintf(stderr, "epoll error on fd %d\n", *argptr->conn_fd);
+          close(*argptr->conn_fd);
+          free(ea->arg);
+          free(ea);
+        }
+        else if(*argptr->state == SEND_REQ){
+          fprintf(stderr, "epoll error on fd %d\n", *argptr->conn_fd);
+          close(*argptr->conn_fd);
+          free(ea->arg);
+          free(ea);
+        }
+        else if(*argptr->state == READ_RESP){
+          fprintf(stderr, "epoll error on fd %d\n", *argptr->server_fd);
+          close(*argptr->server_fd);
+          free(ea->arg);
+          free(ea);
+        }
+        else if(*argptr->state == SEND_REQ){
+          fprintf(stderr, "epoll error on fd %d\n", *argptr->src_fd);
+          close(*argptr->src_fd);
+          free(ea->arg);
+          free(ea);
+        }
+        else{
+          fprintf(stderr, "epoll error on fd %d\n", *argptr->listen_fd);
+          close(*argptr->listen_fd);
+          free(ea->arg);
+          free(ea);
+        }*/
       }
       if(!ea->callback(*argptr)){
         close(*argptr);
@@ -184,7 +211,7 @@ int handle_new_client(struct event_activity act) {
 
 		ea = malloc(sizeof(struct event_action));
 		ea->callback = handle_client;
-    act = malloc(sizeof(struct event_activity))
+    act = malloc(sizeof(struct event_activity));
     act->client_fd = connfd;
     argptr = malloc(sizeof(struct event_activity));
     *argptr = act;
@@ -306,14 +333,25 @@ int handle_client(struct event_activity act){
 
   //Now register dest_server_fd to epoll
   struct event_action *ea;
-  int *argptr;
+  struct event_activity *argptr;
   ea = malloc(sizeof(struct event_action));
   ea->callback = send_req;
-  argptr = malloc(sizeof(int));
-  *argptr = dest_server_fd;
+  argptr = malloc(sizeof(struct event_action));
+  argptr->state = SEND_REQ;
+  argptr->conn_fd = connfd;
+  argptr->server_fd = dest_server_fd;
+  argptr->buf = http_header;
+
+  ea->arg = argptr;
+
+  // int *argptr;
+  // ea = malloc(sizeof(struct event_action));
+  // ea->callback = send_req;
+  // argptr = malloc(sizeof(int));
+  // *argptr = dest_server_fd;
 
   //add event to epoll file descriptor
-  ea->arg = argptr;
+  //ea->arg = argptr;
   event.data.ptr = ea;
   event.events = EPOLLOUT;
   if (epoll_ctl(efd, EPOLL_CTL_ADD, dest_server_fd, &event) < 0){
@@ -331,12 +369,15 @@ int handle_client(struct event_activity act){
   return connfd;
 }
 
+
 //State 2: SEND_REQ
 int send_req(struct event_activity act){
-
+/*
   printf("entered send_req\n");
   int server_dest_fd = act.server_fd;
   int connfd = act.conn_fd;
+  char buf[MAXLINE];
+  buf = act.buf;
 
   int len;
   int total_bytes = 0;
@@ -363,12 +404,18 @@ int send_req(struct event_activity act){
   //Register new event of RECV_RESP
   //Now register dest_server_fd to epoll
   struct event_action *ea;
-  struct event_activity *act;
+  struct event_activity *activty;
   struct event_activity *argptr;
   ea = malloc(sizeof(struct event_action));
   ea->callback = recv_resp;
-  argptr = malloc(sizeof(int));
-  *argptr = dest_server_fd;
+  activty = malloc(sizeof(struct event_activity));
+  activity->server_fd = server_dest_fd;
+  activity->state = SEND_REQ;
+  activity->conn_fd = connfd;
+  activty->buf =
+
+  argptr = malloc(sizeof(struct event_activity));
+  *argptr = activty;
 
   //add event to epoll file descriptor
   ea->arg = argptr;
@@ -377,10 +424,10 @@ int send_req(struct event_activity act){
   if (epoll_ctl(efd, EPOLL_CTL_ADD, dest_server_fd, &event) < 0){
     fprintf(stderr, "error adding event at send_req\n");
     exit(1);
-  }
+  }*/
 
 
-  return;
+  return 1;
 
 }
 
@@ -391,13 +438,15 @@ int recv_resp(struct event_activity act){
 
 
 
-  return;
+  return 1;
 }
 
 //State 4: SEND_RESP
 int send_resp(struct event_activity act){
 
   printf("entered send_resp\n");
+
+  return 1;
 }
 
 void parse_uri(char *uri, char *hostname, char *path, int *port){
@@ -541,6 +590,45 @@ void write_log_entry(char* uri){//, struct sockaddr_storage *addr){
 	fclose(log_file);
 
 }// End write_log_entry
+
+/*
+void while_check_error(struct event_activity *argptr, struct event_action *ea){
+  if(*argptr->state == READ_REQ){
+    fprintf(stderr, "epoll error on fd %d\n", *argptr->conn_fd);
+    close(*argptr->conn_fd);
+    free(ea->arg);
+    free(ea);
+    return;
+  }
+  else if(*argptr->state == SEND_REQ){
+    fprintf(stderr, "epoll error on fd %d\n", *argptr->conn_fd);
+    close(*argptr->conn_fd);
+    free(ea->arg);
+    free(ea);
+    return;
+  }
+  else if(*argptr->state == READ_RESP){
+    fprintf(stderr, "epoll error on fd %d\n", *argptr->server_fd);
+    close(*argptr->server_fd);
+    free(ea->arg);
+    free(ea);
+    return;
+  }
+  else if(*argptr->state == SEND_REQ){
+    fprintf(stderr, "epoll error on fd %d\n", *argptr->src_fd);
+    close(*argptr->src_fd);
+    free(ea->arg);
+    free(ea);
+    return;
+  }
+  else{
+    fprintf(stderr, "epoll error on fd %d\n", *argptr->listen_fd);
+    close(*argptr->listen_fd);
+    free(ea->arg);
+    free(ea);
+    return;
+  }
+}*/
 
 void interrupt_handler(int num){
     printf("RECEIVED INTERRUPT!\n");
