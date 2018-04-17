@@ -34,9 +34,9 @@ struct event_activity{
 };
 
 struct event_action{
-  int(*callback)(struct event_activity);
+  int(*callback)(struct event_activity*);
   //void *arg;
-  struct event_activity arg;
+  struct event_activity* arg;
 };
 
 struct epoll_event event;
@@ -50,14 +50,14 @@ FILE *log_file;
 void command(void);
 void write_log_entry(char* uri);//, struct *sockaddr_storage addr);
 void interrupt_handler(int);
-int handle_new_client(struct event_activity);
-int handle_client(struct event_activity);
+int handle_new_client(struct event_activity*);
+int handle_client(struct event_activity*);
 void handler(int connection_fd);
 void parse_uri(char *uri, char *hostname, char *path, int *port);
 void build_http_header(char *http_header, char *hostname, char *path, int port, int connfd);
-int send_req(struct event_activity);
-int recv_resp(struct event_activity);
-int send_resp(struct event_activity);
+int send_req(struct event_activity*);
+int recv_resp(struct event_activity*);
+int send_resp(struct event_activity*);
 void while_check_error(struct event_activity *argptr, struct event_action *ea);
 
 int main(int argc, char **argv){
@@ -71,7 +71,7 @@ int main(int argc, char **argv){
   int len;
   struct event_activity *argptr;
   struct event_action *ea;
-  struct event_activity act;
+  struct event_activity *act;
 
   size_t n;
   char buf[MAX_OBJECT_SIZE];
@@ -98,17 +98,17 @@ int main(int argc, char **argv){
   //Step 3: Register listenfd with epoll instance
   ea = malloc(sizeof(struct event_action));
   ea->callback = handle_new_client;
-  act = (struct event_activity)malloc(sizeof(struct event_activity));
-  act.listen_fd = listenfd;
-  argptr = malloc(sizeof(struct event_activity));
-  *argptr = act;
+  act = (struct event_activity*)malloc(sizeof(struct event_activity));
+  act->listen_fd = listenfd;
+  argptr = (struct event_activity*)malloc(sizeof(struct event_activity));
+  argptr = act;
   //*argptr = listenfd;
 
   ea->arg = argptr;
   event.data.ptr = ea;
   event.events = EPOLLIN | EPOLLET;
   if (epoll_ctl(efd, EPOLL_CTL_ADD, listenfd, &event) < 0){
-    fprintf(stderr, "error adding event\n");conn_fd
+    fprintf(stderr, "error adding event\n");
     exit(1);
   }
 
@@ -126,6 +126,7 @@ int main(int argc, char **argv){
 
   int num_ready = 0;
   //Step 6: Start an epoll wait loop w/ timeout 1 sec
+  printf("before\n");
   while(1){
 
     num_ready = epoll_wait(efd, events, MAXEVENTS, 1);
@@ -173,24 +174,23 @@ int main(int argc, char **argv){
           free(ea);
         }*/
       }
-      if(!ea->callback(*argptr)){
-        close(*argptr);
+      if(!ea->callback(argptr)){
+        close(argptr->conn_fd);
         free(ea->arg);
         free(ea);
       }
     }
   }//End while
   free(events);
-
 return 0;
 
 }// End main
 
 
-int handle_new_client(struct event_activity act) {
+int handle_new_client(struct event_activity* activity) {
 	printf("NEW CLIENT\n");
 	socklen_t clientlen;
-  int listenfd = act.listen_fd;
+  int listenfd = activity->listen_fd;
 	int connfd;
 	struct sockaddr_storage clientaddr;
 	struct epoll_event event;
@@ -211,12 +211,11 @@ int handle_new_client(struct event_activity act) {
 
 		ea = malloc(sizeof(struct event_action));
 		ea->callback = handle_client;
-    act = malloc(sizeof(struct event_activity));
-    act->client_fd = connfd;
-    argptr = malloc(sizeof(struct event_activity));
-    *argptr = act;
-
-		//*argptr = connfd;
+    act = (struct event_activity*)malloc(sizeof(struct event_activity));
+    act->conn_fd = connfd;
+    act->state = READ_REQ;
+    argptr = (struct event_activity*)malloc(sizeof(struct event_activity));
+    argptr = act;
 
 		// add event to epoll file descriptor
 		ea->arg = argptr;
@@ -238,13 +237,15 @@ int handle_new_client(struct event_activity act) {
 }
 
 //STATE 1: READ_REQUEST
-int handle_client(struct event_activity act){
-  int dest_server_fd = 0;
-  int connfd = act.client_fd;
+int handle_client(struct event_activity* activity){
+  printf("HANDLE_CLIENT\n");
+  int dest_server_fd;
+  int connfd = activity->conn_fd;
   char *buf;
   buf = malloc(sizeof(char)*MAXLINE);
   //memset(&buf[0], 0, sizeof(buf));
 	char usrbuf[MAXLINE];                                                       //Buffer to read from
+  //memset(usrbuf, )
   char *method;                                                      //Method, should be "GET" we don't handle anything else
   method = malloc(sizeof(char)*MAXLINE);
   char *uri;                                                          //The address we are going to i.e(https://www.example.com/)
@@ -310,9 +311,8 @@ int handle_client(struct event_activity act){
 
 
   build_http_header(http_header, hostname, path, port, connfd);
-  //printf("DONE WITH HEADER\n");
+  printf("DONE WITH HEADER\n");
   printf("%s\n", http_header);
-  printf("done\n");
 
   //Write to log_file
   write_log_entry(uri);
@@ -332,32 +332,28 @@ int handle_client(struct event_activity act){
 	printf("CONNECTED!\n");
 
   //Now register dest_server_fd to epoll
-  struct event_action *ea;
   struct event_activity *argptr;
+  struct event_action *ea;
+  struct event_activity *act;
+
   ea = malloc(sizeof(struct event_action));
   ea->callback = send_req;
-  argptr = malloc(sizeof(struct event_action));
-  argptr->state = SEND_REQ;
-  argptr->conn_fd = connfd;
-  argptr->server_fd = dest_server_fd;
-  argptr->buf = http_header;
+  act = (struct event_activity*)malloc(sizeof(struct event_activity));
+  act->server_fd = dest_server_fd;
+  act->state = SEND_REQ;
+  act->conn_fd = connfd;
+  act->server_fd = dest_server_fd;
+  memcpy(act->buf, http_header, sizeof(http_header));
+  printf("MEMMOVE\n %s", act->buf);
+  argptr = act;
 
-  ea->arg = argptr;
-
-  // int *argptr;
-  // ea = malloc(sizeof(struct event_action));
-  // ea->callback = send_req;
-  // argptr = malloc(sizeof(int));
-  // *argptr = dest_server_fd;
-
-  //add event to epoll file descriptor
-  //ea->arg = argptr;
+/*  ea->arg = argptr;
   event.data.ptr = ea;
   event.events = EPOLLOUT;
   if (epoll_ctl(efd, EPOLL_CTL_ADD, dest_server_fd, &event) < 0){
     fprintf(stderr, "error adding event at send_req\n");
     exit(1);
-  }
+  }*/
 
   free(uri);
   free(hostname);
@@ -366,15 +362,17 @@ int handle_client(struct event_activity act){
   free(buf);
   free(version);
   free(method);
-  return connfd;
+  return 1;
 }
 
 
 //State 2: SEND_REQ
-int send_req(struct event_activity act){
-/*
+int send_req(struct event_activity* activity){
+
   printf("entered send_req\n");
-  int server_dest_fd = act.server_fd;
+  printf("HTTP_HEADER:\n, %s", activity->buf);
+
+/*  int server_dest_fd = act.server_fd;
   int connfd = act.conn_fd;
   char buf[MAXLINE];
   buf = act.buf;
@@ -432,7 +430,7 @@ int send_req(struct event_activity act){
 }
 
 //State 3: RECV_RESP
-int recv_resp(struct event_activity act){
+int recv_resp(struct event_activity* act){
 
   printf("entered recv_res\n");
 
@@ -442,7 +440,7 @@ int recv_resp(struct event_activity act){
 }
 
 //State 4: SEND_RESP
-int send_resp(struct event_activity act){
+int send_resp(struct event_activity* act){
 
   printf("entered send_resp\n");
 

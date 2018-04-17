@@ -22,3 +22,15 @@ URI: http://localhost:50183/home.html
 REQUEST ON: Mon 16 Apr 2018 21:55 32 MDT
 URI: http://localhost:50183/home.html
 
+REQUEST ON: Tue 17 Apr 2018 13:55 54 MDT
+URI: http://localhost:50183/
+
+REQUEST ON: Tue 17 Apr 2018 13:56 30 MDT
+URI: http://localhost:50183/
+
+REQUEST ON: Tue 17 Apr 2018 13:58 31 MDT
+URI: http://localhost:50183/
+
+REQUEST ON: Tue 17 Apr 2018 13:59 47 MDT
+URI: http://localhost:50183/
+
