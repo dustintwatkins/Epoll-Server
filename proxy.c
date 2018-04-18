@@ -382,8 +382,6 @@ int handle_client(struct event_activity* activity){
 //State 2: SEND_REQ
 int send_req(struct event_activity* activity){
 
-  printf("entered send_req\n");
-
   int server_dest_fd = activity->server_fd;
   int connfd = activity->conn_fd;
 
@@ -427,7 +425,6 @@ int send_req(struct event_activity* activity){
     exit(1);
   }
 
-  printf("leaving send_req\n");
   return 1;
 }
 
@@ -439,25 +436,30 @@ int recv_resp(struct event_activity* activity){
 
   //read response from destination server
   int len = 0;
-//  size_t total_bytes = 0;
-  char usrbuf[MAX_OBJECT_SIZE];
   char obj[MAX_OBJECT_SIZE];
   activity->n_read = 0;
 
   printf("before read\n");
   while ((len = (recv(activity->server_fd, obj + activity->n_read, MAX_OBJECT_SIZE - activity->n_read, 0))) > 0){
     printf("len: %d\n", len);
-    //total_bytes += len;
-    //memmove(activity->buf + activity->n_read, obj, len);
+    memmove(activity->buf + activity->n_read, obj, len);
     activity->n_read += len;
     //write(activity->conn_fd, usrbuf, len);
-     // if(total_bytes < MAX_OBJECT_SIZE)
-     //   memmove(obj, usrbuf, sizeof());
+    //if(total_bytes < MAX_OBJECT_SIZE)
+      //memmove(obj, usrbuf, sizeof());
   }
-  printf("here\n");
   printf("%s\n", obj);
 
+  // if (errno == EWOULDBLOCK || errno == EAGAIN) {
+	// 	// no more clients to accept()
+  //   printf("erno set");
+	// 	return 1;
+	// } else {
+	// 	perror("error accepting");
+	// 	return 0;
+	// }
 
+  //char* content_len = strstr(obj, "Content-Length: ");
 
   // if(total_bytes < MAX_OBJECT_SIZE){
   //   char* to_be_cached = (char*) malloc(total_bytes);
@@ -483,6 +485,12 @@ int recv_resp(struct event_activity* activity){
   act->state = SEND_RESP;
   act->conn_fd = activity->conn_fd;
   act->buf = (char *)malloc(sizeof(char) * MAX_OBJECT_SIZE);
+  act->n_read = activity->n_read;
+  printf("size:%d\n", act->n_read);
+
+  memcpy(act->buf, obj, sizeof(obj));
+  // printf("act->buf after memcpy()\n");
+  // printf("%s", obj);
 
   argptr = malloc(sizeof(struct event_activity));
   argptr = act;
@@ -503,6 +511,7 @@ int recv_resp(struct event_activity* activity){
     exit(1);
   }
 
+  printf("leaving recv_resp\n");
   return 1;
 }
 
@@ -510,14 +519,17 @@ int recv_resp(struct event_activity* activity){
 int send_resp(struct event_activity* activity){
 
   printf("entered send_resp\n");
+  printf("activity buf:\n");
+  printf("%s", activity->buf);
+  printf("size:%d\n", activity->n_read);
 
-  // int written = 0;
-  // while( written = (write(activity->conn_fd, activity->buf, activity->n_read/*this could be wrong*/)) > 0){
+  int written = 0;
+  while((written = write(activity->conn_fd, activity->buf, activity->n_read/*this could be wrong*/)) > 0){
   //   //just keep writing...
   //   //probably should be setting
   //   //activity->n_written
   //   //maybe while on activity->nl_to_write != 0 and set a
-  // }
+   }
 
   return 0;
 }
@@ -597,7 +609,6 @@ void build_http_header(char *http_header, char *hostname, char *path, int port, 
     char host_header[MAXLINE];
     char other_headers[MAXLINE];
     memset(&other_headers[0], 0, sizeof(other_headers));
-    printf("first:\n%s\n", other_headers);
 
     char *connection_header = "Connection: close\r\n";
     char *prox_header = "Proxy-Connection: close\r\n";
@@ -635,25 +646,20 @@ void build_http_header(char *http_header, char *hostname, char *path, int port, 
             }
 
             //Check for any headers that are other_headers
-            // if( !strncasecmp(buf, connection_key, connection_len) &&
-            //     !strncasecmp(buf, proxy_connection_key, proxy_len) &&
-            //     !strncasecmp(buf, user_agent_key, user_len)){
-            //         strcat(other_headers, buf);
-            //     }
+            if( !strncasecmp(buf, connection_key, connection_len) &&
+                !strncasecmp(buf, proxy_connection_key, proxy_len) &&
+                !strncasecmp(buf, user_agent_key, user_len)){
+                    strcat(other_headers, buf);
+                }
     }
 
     if(strlen(host_header) == 0)                                                //If host header is not set, set it here
         sprintf(host_header, host_header_format, hostname);
 
-
-    printf("other_headers\n");
-    printf("%s", other_headers);
     //Build the http header string
     sprintf(http_header, "%s%s%s%s%s%s%s", request_header, host_header, connection_header,
                              prox_header, user_agent_hdr, other_headers,
                              carriage_return);
-    printf("http_header\n");
-    printf("%s", http_header);
 }
 void write_log_entry(char* uri){//, struct sockaddr_storage *addr){
 
