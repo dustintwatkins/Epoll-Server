@@ -195,7 +195,7 @@ return 0;
 
 
 int handle_new_client(struct event_activity* activity) {
-	printf("NEW CLIENT\n");
+	//printf("NEW CLIENT\n");
 	socklen_t clientlen;
   int listenfd = activity->listen_fd;
 	int connfd;
@@ -246,7 +246,7 @@ int handle_new_client(struct event_activity* activity) {
 
 //STATE 1: READ_REQUEST
 int handle_client(struct event_activity* activity){
-  printf("HANDLE_CLIENT\n");
+  // printf("HANDLE_CLIENT\n");
   int dest_server_fd;
   int connfd = activity->conn_fd;
   //char *buf;
@@ -258,10 +258,10 @@ int handle_client(struct event_activity* activity){
   char method[MAXLINE];
   //char *method;                                                      //Method, should be "GET" we don't handle anything else
   //method = malloc(sizeof(char)*MAXLINE);
-  char uri[MAXLINE];
-  memset(&uri[0], 0, sizeof(uri));
-  //char *uri;                                                          //The address we are going to i.e(https://www.example.com/)
-  //uri = malloc(sizeof(char)*MAXLINE);
+  // char uri[MAXLINE];
+  // memset(&uri[0], 0, sizeof(uri));
+  char *uri;                                                          //The address we are going to i.e(https://www.example.com/)
+  uri = malloc(sizeof(char)*MAXLINE);
   char version[MAXLINE];
   //char *version;                                                    //Will be changing version to 1.0 always
   //version = malloc(sizeof(char)*MAXLINE);
@@ -324,6 +324,7 @@ int handle_client(struct event_activity* activity){
   //printf("%s\n", http_header);
 
   //Write to log_file
+  printf("URI: %s\n", uri);
   write_log_entry(uri);
 
   //Unregister connfd
@@ -359,7 +360,7 @@ int handle_client(struct event_activity* activity){
   act->state = SEND_REQ;
   act->conn_fd = connfd;
   act->server_fd = dest_server_fd;
-
+  act->n_written = 0;
   act->buf = (char *)malloc(sizeof(char)* MAX_OBJECT_SIZE);
 
   // printf("http_header:\n");
@@ -376,58 +377,76 @@ int handle_client(struct event_activity* activity){
     exit(1);
   }
 
+  free(uri);
   return 1;
 }
 
 
 //State 2: SEND_REQ
 int send_req(struct event_activity* activity){
+  printf("send_req\n");
 
   int server_dest_fd = activity->server_fd;
   int connfd = activity->conn_fd;
 
   //memmove(activity->buf, buf, sizeof(char)*MAX_OBJECT_SIZE);
 
- write(server_dest_fd, activity->buf, strlen(activity->buf) + 1);
-
-  //Unregister server_dest_fd
-  epoll_ctl(efd, EPOLL_CTL_DEL, server_dest_fd, NULL);
-
-  //Register new event of RECV_RESP
-  //Now register dest_server_fd to epoll
-  struct event_action *ea;
-  struct event_activity *act;
-  struct event_activity *argptr;
-
-  ea = malloc(sizeof(struct event_action));
-  ea->callback = recv_resp;
-  act = (struct event_activity*)malloc(sizeof(struct event_activity));
-  act->server_fd = server_dest_fd;
-  act->state = SEND_RESP;
-  act->conn_fd = connfd;
-  act->buf = (char *)malloc(sizeof(char) * MAX_OBJECT_SIZE);
-  act->n_read = 0;
-
-  argptr = malloc(sizeof(struct event_activity));
-  argptr = act;
-
-  //Set to nonblocking
-  // if (fcntl(act->server_fd, F_SETFL, fcntl(act->server_fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
-  //   fprintf(stderr, "error setting socket option\n");
-  //   exit(1);
-  // }
-
-  ea->arg = argptr;
-  event.data.ptr = ea;
-  event.events = EPOLLIN | EPOLLET;
-
-    //add event to epoll file descriptor
-  if (epoll_ctl(efd, EPOLL_CTL_ADD, act->server_fd, &event) < 0){
-    fprintf(stderr, "error adding event at send_req\n");
-    exit(1);
+  int len = 0;
+  while((len = write(server_dest_fd, activity->buf, sizeof(activity->buf))) > 0){
+    printf("len:%d\n", len);
+    activity->n_written += len;
   }
+  printf("after\n");
+  printf("%d\n", len);
+  if(len == 0){
+    //Unregister server_dest_fd
+    epoll_ctl(efd, EPOLL_CTL_DEL, server_dest_fd, NULL);
 
-  return 1;
+    //Register new event of RECV_RESP
+    //Now register dest_server_fd to epoll
+    struct event_action *ea;
+    struct event_activity *act;
+    struct event_activity *argptr;
+
+    ea = malloc(sizeof(struct event_action));
+    ea->callback = recv_resp;
+    act = (struct event_activity*)malloc(sizeof(struct event_activity));
+    act->server_fd = server_dest_fd;
+    act->state = SEND_RESP;
+    act->conn_fd = connfd;
+    act->buf = (char *)malloc(sizeof(char) * MAX_OBJECT_SIZE);
+    act->n_read = 0;
+
+    argptr = malloc(sizeof(struct event_activity));
+    argptr = act;
+
+    //Set to nonblocking
+    // if (fcntl(act->server_fd, F_SETFL, fcntl(act->server_fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
+    //   fprintf(stderr, "error setting socket option\n");
+    //   exit(1);
+    // }
+
+    ea->arg = argptr;
+    event.data.ptr = ea;
+    event.events = EPOLLIN | EPOLLET;
+
+      //add event to epoll file descriptor
+    if (epoll_ctl(efd, EPOLL_CTL_ADD, act->server_fd, &event) < 0){
+      fprintf(stderr, "error adding event at send_req\n");
+      exit(1);
+    }
+
+    return 1;
+  }
+  else if (errno == EWOULDBLOCK || errno == EAGAIN) {
+    printf("erno set\n");
+		return 1;
+	} else {
+		perror("error accepting");
+		return 0;
+	}
+
+
 }
 
 //State 3: RECV_RESP
@@ -520,13 +539,20 @@ int send_resp(struct event_activity* activity){
   // printf("buf:\n%s",activity->buf);
 
   int written = 0;
-  while((written = write(activity->conn_fd, activity->buf, activity->n_read/*this could be wrong*/)) > 0){
+  while((written = write(activity->conn_fd, activity->buf, strlen(activity->buf)/*this could be wrong*/)) > 0){
+    printf("writen:%d\n", written);
     activity->nl_to_write -= written;
-    if (activity->nl_to_write == 0)
+    printf("nl:%d\n", activity->nl_to_write);
+    if (activity->nl_to_write <= 0){
+      printf("BREAKING\n");
+      printf("left:%d\n", activity->nl_to_write);
       break;
+    }
+    printf("nl:%d\n", activity->nl_to_write);
   }
+  printf("after:%d\n", written);
 
-  if(activity->nl_to_write == 0){
+  if(activity->nl_to_write <= 0){
      //We have written everything
      return 0;
   }
@@ -683,7 +709,7 @@ void write_log_entry(char* uri){//, struct sockaddr_storage *addr){
 	//fprintf(log_file, "FROM: %s\n", host);
 	fprintf(log_file, "URI: %s\n\n", uri);
 	fclose(log_file);
-  memset(&uri[0], 0,sizeof(uri));
+  //memset(&uri[0], 0,sizeof(uri));
   //free(uri);
 
 }// End write_log_entry
