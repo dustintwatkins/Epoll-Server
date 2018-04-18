@@ -259,6 +259,7 @@ int handle_client(struct event_activity* activity){
   //char *method;                                                      //Method, should be "GET" we don't handle anything else
   //method = malloc(sizeof(char)*MAXLINE);
   char uri[MAXLINE];
+  memset(&uri[0], 0, sizeof(uri));
   //char *uri;                                                          //The address we are going to i.e(https://www.example.com/)
   //uri = malloc(sizeof(char)*MAXLINE);
   char version[MAXLINE];
@@ -387,8 +388,7 @@ int send_req(struct event_activity* activity){
 
   //memmove(activity->buf, buf, sizeof(char)*MAX_OBJECT_SIZE);
 
-  int size = 0;
-  size = write(server_dest_fd, activity->buf, strlen(activity->buf) + 1);
+ write(server_dest_fd, activity->buf, strlen(activity->buf) + 1);
 
   //Unregister server_dest_fd
   epoll_ctl(efd, EPOLL_CTL_DEL, server_dest_fd, NULL);
@@ -406,9 +406,7 @@ int send_req(struct event_activity* activity){
   act->state = SEND_RESP;
   act->conn_fd = connfd;
   act->buf = (char *)malloc(sizeof(char) * MAX_OBJECT_SIZE);
-
-  memcpy(act->buf, activity->buf, size);
-  activity->n_read = 0;
+  act->n_read = 0;
 
   argptr = malloc(sizeof(struct event_activity));
   argptr = act;
@@ -423,7 +421,7 @@ int send_req(struct event_activity* activity){
   event.data.ptr = ea;
   event.events = EPOLLIN | EPOLLET;
 
-  //add event to epoll file descriptor
+    //add event to epoll file descriptor
   if (epoll_ctl(efd, EPOLL_CTL_ADD, act->server_fd, &event) < 0){
     fprintf(stderr, "error adding event at send_req\n");
     exit(1);
@@ -434,7 +432,6 @@ int send_req(struct event_activity* activity){
 
 //State 3: RECV_RESP
 int recv_resp(struct event_activity* activity){
-  //printf("entered recv_res\n");
 
   //read response from destination server
   int len = 0;
@@ -499,7 +496,6 @@ int recv_resp(struct event_activity* activity){
       cache_URL(obj, to_be_cached, act->n_read, CACHE_LIST);
     }
 
-    //printf("leaving recv_resp\n");
     return 1;
   }
   else if (errno == EWOULDBLOCK || errno == EAGAIN) {
@@ -519,16 +515,16 @@ int recv_resp(struct event_activity* activity){
 int send_resp(struct event_activity* activity){
 
   printf("entered send_resp\n");
-  printf("size:%d\n", activity->n_read);
-  printf("nl_write:%d\n", activity->nl_to_write);
-  printf("buf:\n%s",activity->buf);
+  // printf("size:%d\n", activity->n_read);
+  // printf("nl_write:%d\n", activity->nl_to_write);
+  // printf("buf:\n%s",activity->buf);
 
   int written = 0;
-  while((written = write(activity->conn_fd, activity->buf, MAX_OBJECT_SIZE - activity->n_read/*this could be wrong*/)) > 0){
-      activity->nl_to_write -= written;
+  while((written = write(activity->conn_fd, activity->buf, activity->n_read/*this could be wrong*/)) > 0){
+    activity->nl_to_write -= written;
+    if (activity->nl_to_write == 0)
+      break;
   }
-
-  printf("wrtiten:%d\n", written);
 
   if(activity->nl_to_write == 0){
      //We have written everything
@@ -687,6 +683,8 @@ void write_log_entry(char* uri){//, struct sockaddr_storage *addr){
 	//fprintf(log_file, "FROM: %s\n", host);
 	fprintf(log_file, "URI: %s\n\n", uri);
 	fclose(log_file);
+  memset(&uri[0], 0,sizeof(uri));
+  //free(uri);
 
 }// End write_log_entry
 

@@ -1,15 +1,6 @@
-REQUEST ON: Wed 18 Apr 2018 13:54 00 MDT
-URI: http://localhost:50183/home.html
+RQUEST ON: Wed 18 Apr 2018 14:58 46 MDT
+URI: http://localhost:30764/nop-file.txt
 
-REQUEST ON: Wed 18 Apr 2018 13:59 47 MDT
-URI: http://localhost:50183/home.html
-
-REQUEST ON: Wed 18 Apr 2018 14:18 42 MDT
-URI: http://localhost:50183/home.html
-
-REQUEST ON: Wed 18 Apr 2018 14:19 25 MDT
-URI: http://localhost:50183/home.html
-
-REQUEST ON: Wed 18 Apr 2018 14:20 21 MDT
-URI: http://localhost:50183/home.html
+REQUEST ON: Wed 18 Apr 2018 14:58 50 MDT
+URI: http://localhost:33194/tiny.c
 
