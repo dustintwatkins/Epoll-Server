@@ -223,6 +223,7 @@ int handle_new_client(struct event_activity* activity) {
 		ea->arg = argptr;
 		event.data.ptr = ea;
 		event.events = EPOLLIN | EPOLLET; // use edge-triggered monitoring
+    //Set to non-blocking
 		if (epoll_ctl(efd, EPOLL_CTL_ADD, connfd, &event) < 0) {
 			fprintf(stderr, "error adding event\n");
 			exit(1);
@@ -273,15 +274,6 @@ int handle_client(struct event_activity* activity){
 
   int port;
 
-  //read first line
-  //read(connfd, buf, MAXLINE);
-
-  //rio_t rio_client;                                                           //Client rio_t
-  //rio_t rio_server;                                                           //Server rio_t
-
-	//Rio_readinitb(&rio_client, connfd);
-	//Rio_readlineb(&rio_client, buf, MAXLINE);
-  //int nread = 0;
   while( read(connfd, buf, MAXLINE) > 0){
     //Just keep reading, just keep reading...
   }
@@ -334,7 +326,12 @@ int handle_client(struct event_activity* activity){
   char port_string[100];
   sprintf(port_string, "%d", port);
   dest_server_fd = Open_clientfd(hostname, port_string);
-  printf("dest_FD:%d\n", dest_server_fd);
+
+  //Set to non-blocking
+  if (fcntl(dest_server_fd, F_SETFL, fcntl(dest_server_fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
+    fprintf(stderr, "error setting socket option\n");
+    exit(1);
+  }
 
   if(dest_server_fd < 0){
 			printf("Connection to %s on port %d unsuccessful\n", hostname, port);
@@ -358,11 +355,11 @@ int handle_client(struct event_activity* activity){
 
   act->buf = (char *)malloc(sizeof(char)* MAX_OBJECT_SIZE);
 
-  printf("http_header:\n");
-  printf("%s",http_header);
+  // printf("http_header:\n");
+  // printf("%s",http_header);
   memcpy(act->buf, http_header, strlen(http_header) + 1);
   argptr = act;
-  printf("act buf:\n%s", act->buf);
+  //printf("act buf:\n%s", act->buf);
 
   ea->arg = argptr;
   event.data.ptr = ea;
@@ -380,78 +377,88 @@ int handle_client(struct event_activity* activity){
 int send_req(struct event_activity* activity){
 
   printf("entered send_req\n");
-  //printf("HTTP_HEADER:\n%s", activity->buf);
 
   int server_dest_fd = activity->server_fd;
   int connfd = activity->conn_fd;
-  char *buf;
-  buf = (char*)malloc(sizeof(char) * MAX_OBJECT_SIZE);
 
   //memmove(activity->buf, buf, sizeof(char)*MAX_OBJECT_SIZE);
 
-  size_t len = 0;
-  size_t total_bytes = 0;
-  char usrbuf[MAXLINE];
-  char obj[MAX_OBJECT_SIZE];
-  printf("before read\n");
-  while ((len = (read(server_dest_fd, usrbuf, MAX_OBJECT_SIZE))) != 0){
-    printf("lEN: %lu\n", len);
-    total_bytes += len;
-    write(connfd, usrbuf, len);
-    if(total_bytes < MAX_OBJECT_SIZE)
-      strcat(obj, usrbuf);
-  }
-  printf("here\n");
-  if(total_bytes < MAX_OBJECT_SIZE){
-    char* to_be_cached = (char*) malloc(total_bytes);
-    strcpy(to_be_cached, obj);
-    cache_URL(buf, to_be_cached, total_bytes, CACHE_LIST);
-  }
-  printf("after read\n");
-  printf("BUF:\n %s", buf);
-  return 1;
+  write(server_dest_fd, activity->buf, strlen(activity->buf) + 1);
 
-/*
   //Unregister server_dest_fd
-  //Can I just close to unregister?
-  //close(server_dest_fd);
   epoll_ctl(efd, EPOLL_CTL_DEL, server_dest_fd, NULL);
 
   //Register new event of RECV_RESP
   //Now register dest_server_fd to epoll
   struct event_action *ea;
-  struct event_activity *activty;
+  struct event_activity *act;
   struct event_activity *argptr;
 
   ea = malloc(sizeof(struct event_action));
   ea->callback = recv_resp;
-  activty = (struct event_activity*)malloc(sizeof(struct event_activity));
-  activity->server_fd = server_dest_fd;
-  activity->state = SEND_REQ;
-  activity->conn_fd = connfd;
-  //memcpy(activity->buf, )
+  act = (struct event_activity*)malloc(sizeof(struct event_activity));
+  act->server_fd = server_dest_fd;
+  act->state = SEND_RESP;
+  act->conn_fd = connfd;
+  act->buf = (char *)malloc(sizeof(char) * MAX_OBJECT_SIZE);
 
   argptr = malloc(sizeof(struct event_activity));
-  *argptr = activty;
+  argptr = act;
 
-  //add event to epoll file descriptor
+  //Set to nonblocking
+  if (fcntl(act->server_fd, F_SETFL, fcntl(act->server_fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
+    fprintf(stderr, "error setting socket option\n");
+    exit(1);
+  }
+
   ea->arg = argptr;
   event.data.ptr = ea;
-  event.events = EPOLLIN;
-  if (epoll_ctl(efd, EPOLL_CTL_ADD, dest_server_fd, &event) < 0){
+  event.events = EPOLLOUT;
+
+  //add event to epoll file descriptor
+  if (epoll_ctl(efd, EPOLL_CTL_ADD, act->server_fd, &event) < 0){
     fprintf(stderr, "error adding event at send_req\n");
     exit(1);
   }
 
-
-  return 1;*/
-
+  return 1;
 }
 
 //State 3: RECV_RESP
-int recv_resp(struct event_activity* act){
-
+int recv_resp(struct event_activity* activity){
   printf("entered recv_res\n");
+
+  //char* buf;
+
+  //read response from destination server
+  size_t len = 0;
+  size_t total_bytes = 0;
+  char usrbuf[MAXLINE];
+  char obj[MAX_OBJECT_SIZE];
+  activity->n_read = 0;
+
+  printf("before read\n");
+  while ((len = (recv(activity->server_fd + activity->n_read, obj, MAX_OBJECT_SIZE, 0))) != 0){
+    total_bytes += len;
+    //memmove(activity->buf + activity->n_read, obj, len);
+    activity->n_read += len;
+    //write(activity->conn_fd, usrbuf, len);
+    // if(total_bytes < MAX_OBJECT_SIZE)
+    //   strcat(obj, usrbuf);
+  }
+  printf("here\n");
+  printf("usr\n");
+  printf("%s\n", usrbuf);
+
+  // if(total_bytes < MAX_OBJECT_SIZE){
+  //   char* to_be_cached = (char*) malloc(total_bytes);
+  //   strcpy(to_be_cached, obj);
+  //   cache_URL(buf, to_be_cached, total_bytes, CACHE_LIST);
+  // }
+  printf("after read\n");
+
+  //Unregister server_dest_fd
+  epoll_ctl(efd, EPOLL_CTL_DEL, activity->server_fd, NULL);
 
 
 
@@ -587,15 +594,11 @@ void build_http_header(char *http_header, char *hostname, char *path, int port, 
     if(strlen(host_header) == 0)                                                //If host header is not set, set it here
         sprintf(host_header, host_header_format, hostname);
 
-    printf("connection_header\n");
-    printf("%s\n", connection_header);
 
     //Build the http header string
     sprintf(http_header, "%s%s%s%s%s%s%s", request_header, host_header, connection_header,
                              prox_header, user_agent_hdr, other_headers,
                              carriage_return);
-    printf("build_http_header\n");
-    printf("%s", http_header);
 }
 void write_log_entry(char* uri){//, struct sockaddr_storage *addr){
 
