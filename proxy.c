@@ -344,7 +344,7 @@ int handle_client(struct event_activity* activity){
       return 0;
   }
 
-  printf("CONNECTED!\n");
+  // printf("CONNECTED!\n");
 
   //Now register dest_server_fd to epoll
   struct event_activity *argptr;
@@ -405,6 +405,7 @@ int send_req(struct event_activity* activity){
   act->state = SEND_RESP;
   act->conn_fd = connfd;
   act->buf = (char *)malloc(sizeof(char) * MAX_OBJECT_SIZE);
+  activity->n_read = 0;
 
   argptr = malloc(sizeof(struct event_activity));
   argptr = act;
@@ -430,109 +431,115 @@ int send_req(struct event_activity* activity){
 
 //State 3: RECV_RESP
 int recv_resp(struct event_activity* activity){
-  printf("entered recv_res\n");
-
-  //char* buf;
+  //printf("entered recv_res\n");
 
   //read response from destination server
   int len = 0;
   char obj[MAX_OBJECT_SIZE];
-  activity->n_read = 0;
 
-  printf("before read\n");
   while ((len = (recv(activity->server_fd, obj + activity->n_read, MAX_OBJECT_SIZE - activity->n_read, 0))) > 0){
-    printf("len: %d\n", len);
-    memmove(activity->buf + activity->n_read, obj, len);
+    memcpy(activity->buf, obj, len + activity->n_read);
     activity->n_read += len;
     //write(activity->conn_fd, usrbuf, len);
     //if(total_bytes < MAX_OBJECT_SIZE)
       //memmove(obj, usrbuf, sizeof());
   }
-  printf("%s\n", obj);
 
-  // if (errno == EWOULDBLOCK || errno == EAGAIN) {
-	// 	// no more clients to accept()
-  //   printf("erno set");
-	// 	return 1;
-	// } else {
-	// 	perror("error accepting");
-	// 	return 0;
-	// }
+  if(len == 0){
+    //eof received
+    //Unregister server_dest_fd
+    epoll_ctl(efd, EPOLL_CTL_DEL, activity->server_fd, NULL);  //Unregister server_dest_fd
 
-  //char* content_len = strstr(obj, "Content-Length: ");
+    //Register new event of RECV_RESP
+    //Now register dest_server_fd to epoll
+    struct event_action *ea;
+    struct event_activity *act;
+    struct event_activity *argptr;
 
-  // if(total_bytes < MAX_OBJECT_SIZE){
-  //   char* to_be_cached = (char*) malloc(total_bytes);
-  //   strcpy(to_be_cached, obj);
-  //   cache_URL(buf, to_be_cached, total_bytes, CACHE_LIST);
-  // }
+    ea = malloc(sizeof(struct event_action));
+    ea->callback = send_resp;
+    act = (struct event_activity*)malloc(sizeof(struct event_activity));
+    act->server_fd = activity->server_fd;
+    act->state = SEND_RESP;
+    act->conn_fd = activity->conn_fd;
+    act->buf = (char *)malloc(sizeof(char) * MAX_OBJECT_SIZE);
+    act->n_read = 0;
 
-  //if we have not read the content length we need to read again else unregister and add new event struct to epoll
-  //return 1 if we have not read the content length
-  //Unregister server_dest_fd
-  epoll_ctl(efd, EPOLL_CTL_DEL, activity->server_fd, NULL);  //Unregister server_dest_fd
+    memcpy(act->buf, activity->buf, activity->n_read);
 
-  //Register new event of RECV_RESP
-  //Now register dest_server_fd to epoll
-  struct event_action *ea;
-  struct event_activity *act;
-  struct event_activity *argptr;
+    act->n_read += activity->n_read;
+    act->nl_to_write = activity->n_read;
 
-  ea = malloc(sizeof(struct event_action));
-  ea->callback = send_resp;
-  act = (struct event_activity*)malloc(sizeof(struct event_activity));
-  act->server_fd = activity->server_fd;
-  act->state = SEND_RESP;
-  act->conn_fd = activity->conn_fd;
-  act->buf = (char *)malloc(sizeof(char) * MAX_OBJECT_SIZE);
-  act->n_read = activity->n_read;
-  printf("size:%d\n", act->n_read);
+    argptr = malloc(sizeof(struct event_activity));
+    argptr = act;
 
-  memcpy(act->buf, obj, sizeof(obj));
-  // printf("act->buf after memcpy()\n");
-  // printf("%s", obj);
+    //Set to nonblocking
+    // if (fcntl(act->conn_fd, F_SETFL, fcntl(act->conn_fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
+    //   fprintf(stderr, "error setting socket option\n");
+    //   exit(1);
+    // }
 
-  argptr = malloc(sizeof(struct event_activity));
-  argptr = act;
+    ea->arg = argptr;
+    event.data.ptr = ea;
+    event.events = EPOLLOUT;
 
-  //Set to nonblocking
-  if (fcntl(act->conn_fd, F_SETFL, fcntl(act->conn_fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
-    fprintf(stderr, "error setting socket option\n");
-    exit(1);
+    //add event to list
+    if (epoll_ctl(efd, EPOLL_CTL_ADD, act->conn_fd, &event) < 0){
+      fprintf(stderr, "error adding event at send_req\n");
+      exit(1);
+    }
+
+    //add to cash
+    if(act->n_read < MAX_OBJECT_SIZE){
+      char* to_be_cached = (char*) malloc(act->n_read);
+      memcpy(to_be_cached, obj, act->n_read);
+      cache_URL(obj, to_be_cached, act->n_read, CACHE_LIST);
+    }
+
+    //printf("leaving recv_resp\n");
+    return 1;
   }
+  else if (errno == EWOULDBLOCK || errno == EAGAIN) {
+    printf("erno set\n");
+    memcpy(activity->buf, obj, activity->n_read);
+    activity->n_read += len;
+    //printf("%s\n", activity->buf);
+		return 1;
+	} else {
+		perror("error accepting");
+		return 0;
+	}
 
-  ea->arg = argptr;
-  event.data.ptr = ea;
-  event.events = EPOLLOUT;
-
-  //add event to list
-  if (epoll_ctl(efd, EPOLL_CTL_ADD, act->conn_fd, &event) < 0){
-    fprintf(stderr, "error adding event at send_req\n");
-    exit(1);
-  }
-
-  printf("leaving recv_resp\n");
-  return 1;
-}
+}//end RECV_RESP
 
 //State 4: SEND_RESP
 int send_resp(struct event_activity* activity){
 
   printf("entered send_resp\n");
-  printf("activity buf:\n");
-  printf("%s", activity->buf);
   printf("size:%d\n", activity->n_read);
+  printf("nl_write:%d\n", activity->nl_to_write);
+  printf("buf:\n%s",activity->buf);
 
   int written = 0;
-  while((written = write(activity->conn_fd, activity->buf, activity->n_read/*this could be wrong*/)) > 0){
-  //   //just keep writing...
-  //   //probably should be setting
-  //   //activity->n_written
-  //   //maybe while on activity->nl_to_write != 0 and set a
-   }
+  while((written = write(activity->conn_fd, activity->buf, MAX_OBJECT_SIZE - activity->n_read/*this could be wrong*/)) > 0){
+      activity->nl_to_write -= written;
+  }
 
-  return 0;
-}
+  printf("wrtiten:%d\n", written);
+
+  if(activity->nl_to_write == 0){
+     //We have written everything
+     return 0;
+  }
+  else if (errno == EWOULDBLOCK || errno == EAGAIN){
+    printf("erno set\n");
+    return 1;
+  }
+  else{
+    perror("error accepting\n");
+    return 0;
+  }
+}//end SEND_RESP
 
 void parse_uri(char *uri, char *hostname, char *path, int *port){
 
