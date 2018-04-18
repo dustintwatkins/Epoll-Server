@@ -466,7 +466,6 @@ void build_http_header(char *http_header, char *hostname, char *path, int port, 
 	ordering
 	read request
 		cfd, IN
-		getaddrinfo here
 	sendreq
 		sfd, OUT
 	RecRes

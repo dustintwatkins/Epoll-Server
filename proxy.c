@@ -20,6 +20,11 @@
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
 
+/*idea for memory management
+* make a link list. each link is a struct that contains next, prev, and void
+* pointer containing the object that was malloc'd, then on INTERRUPT just iterate
+* through linked list and free that stuff!
+*/
 
 struct event_activity{
   int state;
@@ -145,7 +150,7 @@ int main(int argc, char **argv){
       if (events[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)){
         printf("epoll error in execution\n");
         //Check which state to see where error is
-        /*if(*argptr->state == READ_REQ){
+        /*if(argptr->state == READ_REQ){
           fprintf(stderr, "epoll error on fd %d\n", *argptr->conn_fd);
           close(*argptr->conn_fd);
           free(ea->arg);
@@ -297,6 +302,7 @@ int handle_client(struct event_activity* activity){
 		size_t to_be_written = cached_item->size;
 		written = 0;
 		char* item_buf = cached_item->item_p;
+    //may have to make another event and set callback to SEND_RESP
 		while((written = write(connfd, item_buf, to_be_written)) != to_be_written){
 			item_buf += written;
 			to_be_written -= written;
@@ -406,14 +412,14 @@ int send_req(struct event_activity* activity){
   argptr = act;
 
   //Set to nonblocking
-  if (fcntl(act->server_fd, F_SETFL, fcntl(act->server_fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
-    fprintf(stderr, "error setting socket option\n");
-    exit(1);
-  }
+  // if (fcntl(act->server_fd, F_SETFL, fcntl(act->server_fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
+  //   fprintf(stderr, "error setting socket option\n");
+  //   exit(1);
+  // }
 
   ea->arg = argptr;
   event.data.ptr = ea;
-  event.events = EPOLLOUT;
+  event.events = EPOLLIN | EPOLLET;
 
   //add event to epoll file descriptor
   if (epoll_ctl(efd, EPOLL_CTL_ADD, act->server_fd, &event) < 0){
@@ -421,6 +427,7 @@ int send_req(struct event_activity* activity){
     exit(1);
   }
 
+  printf("leaving send_req\n");
   return 1;
 }
 
@@ -431,46 +438,88 @@ int recv_resp(struct event_activity* activity){
   //char* buf;
 
   //read response from destination server
-  size_t len = 0;
-  size_t total_bytes = 0;
-  char usrbuf[MAXLINE];
+  int len = 0;
+//  size_t total_bytes = 0;
+  char usrbuf[MAX_OBJECT_SIZE];
   char obj[MAX_OBJECT_SIZE];
   activity->n_read = 0;
 
   printf("before read\n");
-  while ((len = (recv(activity->server_fd + activity->n_read, obj, MAX_OBJECT_SIZE, 0))) != 0){
-    total_bytes += len;
+  while ((len = (recv(activity->server_fd, obj + activity->n_read, MAX_OBJECT_SIZE - activity->n_read, 0))) > 0){
+    printf("len: %d\n", len);
+    //total_bytes += len;
     //memmove(activity->buf + activity->n_read, obj, len);
     activity->n_read += len;
     //write(activity->conn_fd, usrbuf, len);
-    // if(total_bytes < MAX_OBJECT_SIZE)
-    //   strcat(obj, usrbuf);
+     // if(total_bytes < MAX_OBJECT_SIZE)
+     //   memmove(obj, usrbuf, sizeof());
   }
   printf("here\n");
-  printf("usr\n");
-  printf("%s\n", usrbuf);
+  printf("%s\n", obj);
+
+
 
   // if(total_bytes < MAX_OBJECT_SIZE){
   //   char* to_be_cached = (char*) malloc(total_bytes);
   //   strcpy(to_be_cached, obj);
   //   cache_URL(buf, to_be_cached, total_bytes, CACHE_LIST);
   // }
-  printf("after read\n");
 
+  //if we have not read the content length we need to read again else unregister and add new event struct to epoll
+  //return 1 if we have not read the content length
   //Unregister server_dest_fd
-  epoll_ctl(efd, EPOLL_CTL_DEL, activity->server_fd, NULL);
+  epoll_ctl(efd, EPOLL_CTL_DEL, activity->server_fd, NULL);  //Unregister server_dest_fd
 
+  //Register new event of RECV_RESP
+  //Now register dest_server_fd to epoll
+  struct event_action *ea;
+  struct event_activity *act;
+  struct event_activity *argptr;
 
+  ea = malloc(sizeof(struct event_action));
+  ea->callback = send_resp;
+  act = (struct event_activity*)malloc(sizeof(struct event_activity));
+  act->server_fd = activity->server_fd;
+  act->state = SEND_RESP;
+  act->conn_fd = activity->conn_fd;
+  act->buf = (char *)malloc(sizeof(char) * MAX_OBJECT_SIZE);
+
+  argptr = malloc(sizeof(struct event_activity));
+  argptr = act;
+
+  //Set to nonblocking
+  if (fcntl(act->conn_fd, F_SETFL, fcntl(act->conn_fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
+    fprintf(stderr, "error setting socket option\n");
+    exit(1);
+  }
+
+  ea->arg = argptr;
+  event.data.ptr = ea;
+  event.events = EPOLLOUT;
+
+  //add event to list
+  if (epoll_ctl(efd, EPOLL_CTL_ADD, act->conn_fd, &event) < 0){
+    fprintf(stderr, "error adding event at send_req\n");
+    exit(1);
+  }
 
   return 1;
 }
 
 //State 4: SEND_RESP
-int send_resp(struct event_activity* act){
+int send_resp(struct event_activity* activity){
 
   printf("entered send_resp\n");
 
-  return 1;
+  // int written = 0;
+  // while( written = (write(activity->conn_fd, activity->buf, activity->n_read/*this could be wrong*/)) > 0){
+  //   //just keep writing...
+  //   //probably should be setting
+  //   //activity->n_written
+  //   //maybe while on activity->nl_to_write != 0 and set a
+  // }
+
+  return 0;
 }
 
 void parse_uri(char *uri, char *hostname, char *path, int *port){
@@ -547,6 +596,8 @@ void build_http_header(char *http_header, char *hostname, char *path, int port, 
     char request_header[MAXLINE];
     char host_header[MAXLINE];
     char other_headers[MAXLINE];
+    memset(&other_headers[0], 0, sizeof(other_headers));
+    printf("first:\n%s\n", other_headers);
 
     char *connection_header = "Connection: close\r\n";
     char *prox_header = "Proxy-Connection: close\r\n";
@@ -584,21 +635,25 @@ void build_http_header(char *http_header, char *hostname, char *path, int port, 
             }
 
             //Check for any headers that are other_headers
-            if( !strncasecmp(buf, connection_key, connection_len) &&
-                !strncasecmp(buf, proxy_connection_key, proxy_len) &&
-                !strncasecmp(buf, user_agent_key, user_len)){
-                    strcat(other_headers, buf);
-                }
+            // if( !strncasecmp(buf, connection_key, connection_len) &&
+            //     !strncasecmp(buf, proxy_connection_key, proxy_len) &&
+            //     !strncasecmp(buf, user_agent_key, user_len)){
+            //         strcat(other_headers, buf);
+            //     }
     }
 
     if(strlen(host_header) == 0)                                                //If host header is not set, set it here
         sprintf(host_header, host_header_format, hostname);
 
 
+    printf("other_headers\n");
+    printf("%s", other_headers);
     //Build the http header string
     sprintf(http_header, "%s%s%s%s%s%s%s", request_header, host_header, connection_header,
                              prox_header, user_agent_hdr, other_headers,
                              carriage_return);
+    printf("http_header\n");
+    printf("%s", http_header);
 }
 void write_log_entry(char* uri){//, struct sockaddr_storage *addr){
 
