@@ -387,7 +387,8 @@ int send_req(struct event_activity* activity){
 
   //memmove(activity->buf, buf, sizeof(char)*MAX_OBJECT_SIZE);
 
-  write(server_dest_fd, activity->buf, strlen(activity->buf) + 1);
+  int size = 0;
+  size = write(server_dest_fd, activity->buf, strlen(activity->buf) + 1);
 
   //Unregister server_dest_fd
   epoll_ctl(efd, EPOLL_CTL_DEL, server_dest_fd, NULL);
@@ -405,6 +406,8 @@ int send_req(struct event_activity* activity){
   act->state = SEND_RESP;
   act->conn_fd = connfd;
   act->buf = (char *)malloc(sizeof(char) * MAX_OBJECT_SIZE);
+
+  memcpy(act->buf, activity->buf, size);
   activity->n_read = 0;
 
   argptr = malloc(sizeof(struct event_activity));
