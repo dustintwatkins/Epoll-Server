@@ -30,8 +30,7 @@ struct event_activity{
   int state;
   int listen_fd;
   int conn_fd;
-  int server_fd;            //Destination server fd
-  //char buf[MAX_OBJECT_SIZE];
+  int server_fd;
   char * buf;
   int n_read;
   int n_written;
@@ -51,7 +50,6 @@ int efd;
 
 CacheList* CACHE_LIST;
 size_t written = 0;
-FILE *log_file;
 
 void command(void);
 void write_log_entry(char* uri);//, struct *sockaddr_storage addr);
@@ -66,22 +64,16 @@ int recv_resp(struct event_activity*);
 int send_resp(struct event_activity*);
 void while_check_error(struct event_activity *argptr, struct event_action *ea);
 
+struct epoll_event event;
+struct epoll_event *events;
+
+struct event_activity *arg_ptr;
+struct event_action *eact;
+struct event_activity *activ;
+
 int main(int argc, char **argv){
 
   int listenfd;
-  //int connfd;
-//  socklen_t clientlen;
-  //struct sockaddr_storage clientaddr;
-  struct epoll_event event;
-  struct epoll_event *events;
-//  int i;
-  //int len;
-  struct event_activity *argptr;
-  struct event_action *ea;
-  struct event_activity *act;
-
-  //size_t n;
-  //char buf[MAX_OBJECT_SIZE];
 
   if (argc != 2){
     fprintf(stderr, "usage: %s <port>\n", argv[0]);
@@ -103,29 +95,27 @@ int main(int argc, char **argv){
   }
 
   //Step 3: Register listenfd with epoll instance
-  ea = malloc(sizeof(struct event_action));
-  ea->callback = handle_new_client;
-  act = (struct event_activity*)malloc(sizeof(struct event_activity));
-  act->listen_fd = listenfd;
-  argptr = (struct event_activity*)malloc(sizeof(struct event_activity));
-  argptr = act;
-  //*argptr = listenfd;
+  eact = malloc(sizeof(struct event_action));
+  eact->callback = handle_new_client;
+  activ = (struct event_activity*)malloc(sizeof(struct event_activity));
+  activ->listen_fd = listenfd;
+  arg_ptr = (struct event_activity*)malloc(sizeof(struct event_activity));
+  arg_ptr = activ;
 
-  ea->arg = argptr;
-  event.data.ptr = ea;
+  eact->arg = arg_ptr;
+  event.data.ptr = eact;
   event.events = EPOLLIN | EPOLLET;
   if (epoll_ctl(efd, EPOLL_CTL_ADD, listenfd, &event) < 0){
     fprintf(stderr, "error adding event\n");
     exit(1);
   }
 
-
   //Step 4: Open log file
   //This is done every time a client connects it also closes right after
 
   //Step 5: initialize cache
-  CACHE_LIST = (CacheList*)malloc(sizeof(CacheList));
-  cache_init(CACHE_LIST);
+  // CACHE_LIST = (CacheList*)malloc(sizeof(CacheList));
+  // cache_init(CACHE_LIST);
   signal(SIGINT, interrupt_handler);
 
   //Buffer where events are returned
@@ -139,52 +129,20 @@ int main(int argc, char **argv){
     num_ready = epoll_wait(efd, events, MAXEVENTS, 1);
 
     if(num_ready < 0){
-      //no events ready
       perror("epoll_wait error");
       break;
     }
     for (int i = 0; i < num_ready; i++) {
 
-      ea = (struct event_action *)events[i].data.ptr;
-      argptr = ea->arg;
+      eact = (struct event_action *)events[i].data.ptr;
+      arg_ptr = eact->arg;
       if (events[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)){
         printf("epoll error in execution\n");
-        //Check which state to see where error is
-        /*if(argptr->state == READ_REQ){
-          fprintf(stderr, "epoll error on fd %d\n", *argptr->conn_fd);
-          close(*argptr->conn_fd);
-          free(ea->arg);
-          free(ea);
-        }
-        else if(*argptr->state == SEND_REQ){
-          fprintf(stderr, "epoll error on fd %d\n", *argptr->conn_fd);
-          close(*argptr->conn_fd);
-          free(ea->arg);
-          free(ea);
-        }
-        else if(*argptr->state == READ_RESP){
-          fprintf(stderr, "epoll error on fd %d\n", *argptr->server_fd);
-          close(*argptr->server_fd);
-          free(ea->arg);
-          free(ea);
-        }
-        else if(*argptr->state == SEND_REQ){
-          fprintf(stderr, "epoll error on fd %d\n", *argptr->src_fd);
-          close(*argptr->src_fd);
-          free(ea->arg);
-          free(ea);
-        }
-        else{
-          fprintf(stderr, "epoll error on fd %d\n", *argptr->listen_fd);
-          close(*argptr->listen_fd);
-          free(ea->arg);
-          free(ea);
-        }*/
       }
-      if(!ea->callback(argptr)){
-        close(argptr->conn_fd);
-        free(ea->arg);
-        free(ea);
+      if(!eact->callback(arg_ptr)){
+        close(arg_ptr->conn_fd);
+        free(eact->arg);
+        free(eact);
       }
     }
   }//End while
@@ -195,7 +153,7 @@ return 0;
 
 
 int handle_new_client(struct event_activity* activity) {
-	//printf("NEW CLIENT\n");
+
 	socklen_t clientlen;
   int listenfd = activity->listen_fd;
 	int connfd;
@@ -246,92 +204,89 @@ int handle_new_client(struct event_activity* activity) {
 
 //STATE 1: READ_REQUEST
 int handle_client(struct event_activity* activity){
-  // printf("HANDLE_CLIENT\n");
-  int dest_server_fd;
+
+  int dest_server_fd = 0;
   int connfd = activity->conn_fd;
-  //char *buf;
-  //buf = malloc(sizeof(char)*MAXLINE);
+
   char buf[MAXLINE];
-  memset(&buf[0], 0, sizeof(buf));
-	//char usrbuf[MAXLINE];                                                       //Buffer to read from
-  //memset(usrbuf, )
+  memset(&buf[0], 0, sizeof(char)*MAXLINE);
+
   char method[MAXLINE];
-  //char *method;                                                      //Method, should be "GET" we don't handle anything else
-  //method = malloc(sizeof(char)*MAXLINE);
-  // char uri[MAXLINE];
-  // memset(&uri[0], 0, sizeof(uri));
-  char *uri;                                                          //The address we are going to i.e(https://www.example.com/)
-  uri = malloc(sizeof(char)*MAXLINE);
+  memset(&method[0], 0, sizeof(char)*MAXLINE);
+
+  char uri[MAXLINE];
+  memset(&uri[0], 0, sizeof(char)*MAXLINE);
+
   char version[MAXLINE];
-  //char *version;                                                    //Will be changing version to 1.0 always
-  //version = malloc(sizeof(char)*MAXLINE);
+  memset(&version[0], 0, sizeof(char)*MAXLINE);
+
   char hostname[MAXLINE];
-  //char *hostname;                                                    //i.e. www.example.com
-  //hostname = malloc(sizeof(char)*MAXLINE);
-  memset(&hostname[0], 0, sizeof(hostname));
+  memset(&hostname[0], 0, sizeof(char)*MAXLINE);
+
   char path[MAXLINE];
-  //char *path;                                                       //destinationin server i.e /home/index.html
-  //path = malloc(sizeof(char)* MAXLINE);
-  memset(&path[0], 0, sizeof(path));
+  memset(&path[0], 0, sizeof(char)*MAXLINE);
+
   char http_header[MAXLINE];
-  memset(&http_header[0], 0, sizeof(http_header));
-  //char *http_header;
-  //http_header = malloc(sizeof(char)*MAXLINE);
+  memset(&http_header[0], 0, sizeof(char)*MAXLINE);
 
-  int port;
+  int port = 0;
+  int bytes_read = 0;
+  int nread = 0;
 
-  while( read(connfd, buf, MAXLINE) > 0){
+  while((nread = read(connfd, buf, MAXLINE)) > 0){
     //Just keep reading, just keep reading...
+    bytes_read += nread;
   }
 
-  //printf("buf\n %s\n", buf);
   sscanf(buf,"%s %s %s", method, uri, version);
-
-  //printf("METHOD: %s\n", method);
-  //printf("URI: %s\n", uri);
-  //printf("VERSION: %s\n", version);
+  // printf("METHOD: %s\n", method);
+  // printf("URI: %s\n", uri);
+  // printf("VERSION: %s\n", version);
 
   if (strcasecmp(method, "GET")){
     printf("Proxy server only implements GET method\n");
     return 0;
   }
 
-  CachedItem* cached_item = find(buf, CACHE_LIST);
-	if(cached_item != NULL){
-    printf("cached item found\n");
-		move_to_front(cached_item->url, CACHE_LIST);
-		size_t to_be_written = cached_item->size;
-		written = 0;
-		char* item_buf = cached_item->item_p;
-    //may have to make another event and set callback to SEND_RESP
-		while((written = write(connfd, item_buf, to_be_written)) != to_be_written){
-			item_buf += written;
-			to_be_written -= written;
-		}
-		return 0;
-	}
+  // CachedItem* cached_item = (CachedItem*) malloc(sizeof(struct CachedItem));
+  // memset(&cached_item[0], 0, sizeof(char)*MAXLINE);
+  // cached_item = find(buf, CACHE_LIST);
+  // printf("afterfind\n");
+	// if(cached_item != NULL){
+  //   printf("cached item found\n");
+	// 	move_to_front(cached_item->url, CACHE_LIST);
+	// 	size_t to_be_written = cached_item->size;
+	// 	written = 0;
+	// 	char* item_buf = cached_item->item_p;
+  //   //may have to make another event and set callback to SEND_RESP
+	// 	while((written = write(connfd, item_buf, to_be_written)) != to_be_written){
+	// 		item_buf += written;
+	// 		to_be_written -= written;
+	// 	}
+	// 	return 0;
+	// }
+  // free(cached_item);
 
   //Parse the URI to get hostname, path and port
   parse_uri(uri, hostname, path, &port);
-	//printf("DONE PARSING...\n");
-	//printf("PATH: %s\n", path);
-	//printf("PORT: %d\n", port);
-	//printf("HOSTNAME: %s\n", hostname);
+	// printf("DONE PARSING...\n");
+	// printf("PATH: %s\n", path);
+	// printf("PORT: %d\n", port);
+	// printf("HOSTNAME: %s\n", hostname);
 
 
   build_http_header(http_header, hostname, path, port, connfd);
-  //printf("DONE WITH HEADER\n");
   //printf("%s\n", http_header);
 
   //Write to log_file
-  printf("URI: %s\n", uri);
   write_log_entry(uri);
 
   //Unregister connfd
   epoll_ctl(efd, EPOLL_CTL_DEL, connfd, NULL);
 
   //Get dest_server_fd
-  char port_string[100];
+  char port_string[16];
+  //memset(&port_string[0], 0, sizeof(port_string));
   sprintf(port_string, "%d", port);
   dest_server_fd = Open_clientfd(hostname, port_string);
 
@@ -345,8 +300,6 @@ int handle_client(struct event_activity* activity){
 			printf("Connection to %s on port %d unsuccessful\n", hostname, port);
       return 0;
   }
-
-  // printf("CONNECTED!\n");
 
   //Now register dest_server_fd to epoll
   struct event_activity *argptr;
@@ -362,12 +315,11 @@ int handle_client(struct event_activity* activity){
   act->server_fd = dest_server_fd;
   act->n_written = 0;
   act->buf = (char *)malloc(sizeof(char)* MAX_OBJECT_SIZE);
+  memset(&act->buf[0], 0, sizeof(char)* MAX_OBJECT_SIZE);
 
-  // printf("http_header:\n");
-  // printf("%s",http_header);
   memcpy(act->buf, http_header, strlen(http_header) + 1);
+  act->n_read = bytes_read;
   argptr = act;
-  //printf("act buf:\n%s", act->buf);
 
   ea->arg = argptr;
   event.data.ptr = ea;
@@ -377,28 +329,24 @@ int handle_client(struct event_activity* activity){
     exit(1);
   }
 
-  free(uri);
   return 1;
 }
 
 
 //State 2: SEND_REQ
 int send_req(struct event_activity* activity){
-  printf("send_req\n");
 
   int server_dest_fd = activity->server_fd;
   int connfd = activity->conn_fd;
 
-  //memmove(activity->buf, buf, sizeof(char)*MAX_OBJECT_SIZE);
+  // int len = 0;
+  // while((len = write(server_dest_fd, activity->buf + activity->nl_to_write, activity->n_read)) > 0){
+  //   activity->nl_to_write += len;
+  //   activity->n_read -= len;
+  // }
 
-  int len = 0;
-  while((len = write(server_dest_fd, activity->buf, sizeof(activity->buf))) > 0){
-    printf("len:%d\n", len);
-    activity->n_written += len;
-  }
-  printf("after\n");
-  printf("%d\n", len);
-  if(len == 0){
+  write(server_dest_fd, activity->buf, strlen(activity->buf) + 1);
+
     //Unregister server_dest_fd
     epoll_ctl(efd, EPOLL_CTL_DEL, server_dest_fd, NULL);
 
@@ -415,22 +363,23 @@ int send_req(struct event_activity* activity){
     act->state = SEND_RESP;
     act->conn_fd = connfd;
     act->buf = (char *)malloc(sizeof(char) * MAX_OBJECT_SIZE);
+    memset(&act->buf[0], 0, sizeof(char) * MAX_OBJECT_SIZE);
     act->n_read = 0;
 
     argptr = malloc(sizeof(struct event_activity));
     argptr = act;
 
     //Set to nonblocking
-    // if (fcntl(act->server_fd, F_SETFL, fcntl(act->server_fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
-    //   fprintf(stderr, "error setting socket option\n");
-    //   exit(1);
-    // }
+    if (fcntl(act->server_fd, F_SETFL, fcntl(act->server_fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
+      fprintf(stderr, "error setting socket option\n");
+      exit(1);
+    }
 
     ea->arg = argptr;
     event.data.ptr = ea;
     event.events = EPOLLIN | EPOLLET;
 
-      //add event to epoll file descriptor
+    //add event to epoll file descriptor
     if (epoll_ctl(efd, EPOLL_CTL_ADD, act->server_fd, &event) < 0){
       fprintf(stderr, "error adding event at send_req\n");
       exit(1);
@@ -438,16 +387,6 @@ int send_req(struct event_activity* activity){
 
     return 1;
   }
-  else if (errno == EWOULDBLOCK || errno == EAGAIN) {
-    printf("erno set\n");
-		return 1;
-	} else {
-		perror("error accepting");
-		return 0;
-	}
-
-
-}
 
 //State 3: RECV_RESP
 int recv_resp(struct event_activity* activity){
@@ -455,17 +394,15 @@ int recv_resp(struct event_activity* activity){
   //read response from destination server
   int len = 0;
   char obj[MAX_OBJECT_SIZE];
+  memset(&obj[0], 0, sizeof(char) * MAX_OBJECT_SIZE);
 
   while ((len = (recv(activity->server_fd, obj + activity->n_read, MAX_OBJECT_SIZE - activity->n_read, 0))) > 0){
     memcpy(activity->buf, obj, len + activity->n_read);
     activity->n_read += len;
-    //write(activity->conn_fd, usrbuf, len);
-    //if(total_bytes < MAX_OBJECT_SIZE)
-      //memmove(obj, usrbuf, sizeof());
   }
 
   if(len == 0){
-    //eof received
+
     //Unregister server_dest_fd
     epoll_ctl(efd, EPOLL_CTL_DEL, activity->server_fd, NULL);  //Unregister server_dest_fd
 
@@ -482,6 +419,7 @@ int recv_resp(struct event_activity* activity){
     act->state = SEND_RESP;
     act->conn_fd = activity->conn_fd;
     act->buf = (char *)malloc(sizeof(char) * MAX_OBJECT_SIZE);
+    memset(&act->buf[0], 0, sizeof(char)*MAX_OBJECT_SIZE);
     act->n_read = 0;
 
     memcpy(act->buf, activity->buf, activity->n_read);
@@ -493,10 +431,10 @@ int recv_resp(struct event_activity* activity){
     argptr = act;
 
     //Set to nonblocking
-    // if (fcntl(act->conn_fd, F_SETFL, fcntl(act->conn_fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
-    //   fprintf(stderr, "error setting socket option\n");
-    //   exit(1);
-    // }
+    if (fcntl(act->conn_fd, F_SETFL, fcntl(act->conn_fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
+      fprintf(stderr, "error setting socket option\n");
+      exit(1);
+    }
 
     ea->arg = argptr;
     event.data.ptr = ea;
@@ -509,11 +447,15 @@ int recv_resp(struct event_activity* activity){
     }
 
     //add to cash
-    if(act->n_read < MAX_OBJECT_SIZE){
-      char* to_be_cached = (char*) malloc(act->n_read);
-      memcpy(to_be_cached, obj, act->n_read);
-      cache_URL(obj, to_be_cached, act->n_read, CACHE_LIST);
-    }
+    // if(act->n_read < MAX_OBJECT_SIZE){
+    //   printf("adding to cache\n");
+    //   char* to_be_cached = (char*) malloc(act->n_read);
+    //   memset(&to_be_cached[0], 0, act->n_read);
+    //   memcpy(to_be_cached, obj, act->n_read);
+    //   printf("%s\n", to_be_cached);
+    //   cache_URL(obj, to_be_cached, act->n_read, CACHE_LIST);
+    //   printf("%s\n", CACHE_LIST->first->url);
+    // }
 
     return 1;
   }
@@ -533,24 +475,10 @@ int recv_resp(struct event_activity* activity){
 //State 4: SEND_RESP
 int send_resp(struct event_activity* activity){
 
-  printf("entered send_resp\n");
-  // printf("size:%d\n", activity->n_read);
-  // printf("nl_write:%d\n", activity->nl_to_write);
-  // printf("buf:\n%s",activity->buf);
-
   int written = 0;
-  while((written = write(activity->conn_fd, activity->buf, strlen(activity->buf)/*this could be wrong*/)) > 0){
-    printf("writen:%d\n", written);
+  while((written = write(activity->conn_fd, activity->buf, activity->nl_to_write/*this could be wrong*/)) > 0){
     activity->nl_to_write -= written;
-    printf("nl:%d\n", activity->nl_to_write);
-    if (activity->nl_to_write <= 0){
-      printf("BREAKING\n");
-      printf("left:%d\n", activity->nl_to_write);
-      break;
-    }
-    printf("nl:%d\n", activity->nl_to_write);
   }
-  printf("after:%d\n", written);
 
   if(activity->nl_to_write <= 0){
      //We have written everything
@@ -573,6 +501,7 @@ void parse_uri(char *uri, char *hostname, char *path, int *port){
     memset(&my_sub[0], 0, sizeof(my_sub));
     char* sub = my_sub;
     char num[MAXLINE];
+    memset(&num[0], 0, sizeof(num));
     int hostname_set = 0;
 
     *port = 80;                                                                 //Default port is 80
@@ -583,7 +512,6 @@ void parse_uri(char *uri, char *hostname, char *path, int *port){
         for(; i < strlen(sub_str1); i++)
             sub[j++] = sub_str1[i];
     }
-    //printf("sub: %s\n", sub);                                                 //sub contains everything after http://
 
     /*  Check if colon exists in sub-string
     *   if it exists, we have a designated port
@@ -609,7 +537,6 @@ void parse_uri(char *uri, char *hostname, char *path, int *port){
         }
         hostname_set = 1;
     }
-    //printf("PORT: %d\n", *port);
 
     //Get Path
     char *sub_path = strstr(sub, "/");
@@ -639,6 +566,7 @@ void build_http_header(char *http_header, char *hostname, char *path, int port, 
     char buf[MAXLINE];
     char request_header[MAXLINE];
     char host_header[MAXLINE];
+    memset(&host_header[0], 0, sizeof(host_header));
     char other_headers[MAXLINE];
     memset(&other_headers[0], 0, sizeof(other_headers));
 
@@ -693,7 +621,7 @@ void build_http_header(char *http_header, char *hostname, char *path, int port, 
                              prox_header, user_agent_hdr, other_headers,
                              carriage_return);
 }
-void write_log_entry(char* uri){//, struct sockaddr_storage *addr){
+void write_log_entry(char* uri){
 
 	//Format current time string
 	time_t t;
@@ -704,61 +632,26 @@ void write_log_entry(char* uri){//, struct sockaddr_storage *addr){
 
 	//Open log.txt
 	//"a" - open for writing
+  FILE *log_file;
 	log_file = fopen("log.txt", "a");
-	fprintf(log_file, "REQUEST ON: %s\n", t_string);
-	//fprintf(log_file, "FROM: %s\n", host);
-	fprintf(log_file, "URI: %s\n\n", uri);
-	fclose(log_file);
-  //memset(&uri[0], 0,sizeof(uri));
-  //free(uri);
-
+  if(log_file != NULL){
+  	fprintf(log_file, "REQUEST ON: %s\n", t_string);
+  	//fprintf(log_file, "FROM: %s\n", host);
+  	fprintf(log_file, "URI: %s\n\n", uri);
+    printf("before close\n");
+  	fclose(log_file);
+  }
 }// End write_log_entry
-
-/*
-void while_check_error(struct event_activity *argptr, struct event_action *ea){
-  if(*argptr->state == READ_REQ){
-    fprintf(stderr, "epoll error on fd %d\n", *argptr->conn_fd);
-    close(*argptr->conn_fd);
-    free(ea->arg);
-    free(ea);
-    return;
-  }
-  else if(*argptr->state == SEND_REQ){
-    fprintf(stderr, "epoll error on fd %d\n", *argptr->conn_fd);
-    close(*argptr->conn_fd);
-    free(ea->arg);
-    free(ea);
-    return;
-  }
-  else if(*argptr->state == READ_RESP){
-    fprintf(stderr, "epoll error on fd %d\n", *argptr->server_fd);
-    close(*argptr->server_fd);
-    free(ea->arg);
-    free(ea);
-    return;
-  }
-  else if(*argptr->state == SEND_REQ){
-    fprintf(stderr, "epoll error on fd %d\n", *argptr->src_fd);
-    close(*argptr->src_fd);
-    free(ea->arg);
-    free(ea);
-    return;
-  }
-  else{
-    fprintf(stderr, "epoll error on fd %d\n", *argptr->listen_fd);
-    close(*argptr->listen_fd);
-    free(ea->arg);
-    free(ea);
-    return;
-  }
-}*/
 
 void interrupt_handler(int num){
     printf("RECEIVED INTERRUPT!\n");
     printf("FREEING DATA\n");
-    cache_destruct(CACHE_LIST);
-    free(CACHE_LIST);
+    //cache_destruct(CACHE_LIST);
+    //free(CACHE_LIST);
     free(events);
-	//Will also need to free ea
+    free(eact->arg);
+    free(eact);
+    free(activ);
+
     exit(0);
 }// End interrupt_handler
